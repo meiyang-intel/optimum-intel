@@ -431,10 +431,43 @@ class LlamaModelPatcher(DecoderModelPatcher):
 
         # llama has some accuracy issues with bf16 with transformers >= 4.39
         # fill causal mask in slightly different way for avoid overflow on some platforms
+        max_positions = self._model.config.max_position_embeddings
         if is_transformers_version(">=", "4.39.0"):
             self._model.model._orig_update_causal_mask = self._model.model._update_causal_mask
+            self._model.model.register_buffer(
+                "bias",
+                torch.tril(torch.ones((max_positions, max_positions), dtype=torch.bool)).view(
+                    1, 1, max_positions, max_positions
+                ),
+                persistent=False,
+            )
             self._model.model._update_causal_mask = types.MethodType(
                 _llama_gemma_update_causal_mask, self._model.model
+            )
+        # Cos/Sin table should be generated in FP32 to avoid accuracy
+        # Here we use a fixed-length cos/sin table to avoid accuracy issue of runtime generation
+        def create_sinusoidal_positions(num_pos: int, dim: int) -> torch.Tensor:
+            inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2, dtype=torch.int64) / dim))
+            sinusoid_inp = torch.einsum(
+                "i , j -> i j", torch.arange(num_pos, dtype=torch.int64).float(), inv_freq
+            ).float()
+            emb = torch.cat((sinusoid_inp, sinusoid_inp), dim=-1)
+            return torch.cat((torch.sin(emb), torch.cos(emb)), dim=1)
+
+        self._model.model.register_buffer(
+            "embed_positions", create_sinusoidal_positions(max_positions, self._model.config.hidden_size // self._model.config.num_attention_heads)
+        )
+
+        def gemma_rotary_emb_forward(self, x, position_ids):
+            sincos = self.embed_positions[position_ids]
+            sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
+            return cos, sin
+
+        for layer in self._model.model.layers:
+            rotary_emb = layer.self_attn.rotary_emb
+            rotary_emb.embed_positions = self._model.model.embed_positions
+            rotary_emb.forward = types.MethodType(
+                gemma_rotary_emb_forward, rotary_emb
             )
 
     def __exit__(self, exc_type, exc_value, traceback):
