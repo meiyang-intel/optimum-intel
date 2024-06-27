@@ -23,6 +23,7 @@ from optimum.exporters.onnx.model_configs import (
     FalconOnnxConfig,
     GemmaOnnxConfig,
     LlamaOnnxConfig,
+    CodeGenOnnxConfig,
     MPTOnnxConfig,
     PhiOnnxConfig,
     UNetOnnxConfig,
@@ -46,6 +47,7 @@ from .model_patcher import (
     GemmaModelPatcher,
     InternLMPatcher,
     LlamaModelPatcher,
+    CodegenModelPatcher,
     MixtralModelPatcher,
     MPTModelPatcher,
     Phi3ModelPatcher,
@@ -304,6 +306,25 @@ class LlamaOpenVINOConfig(LlamaOnnxConfig):
         self, model: Union["PreTrainedModel", "TFPreTrainedModel"], model_kwargs: Optional[Dict[str, Any]] = None
     ) -> "ModelPatcher":
         return LlamaModelPatcher(self, model, model_kwargs=model_kwargs)
+
+#@register_in_tasks_manager(
+#    "codegen",
+#    *[
+#        "feature-extraction",
+#        "feature-extraction-with-past",
+#        "text-generation",
+#        "text-generation-with-past",
+#    ],
+#    library_name="transformers",
+#)
+#class CodegenOpenVINOConfig(CodeGenOnnxConfig):
+#    DEFAULT_ONNX_OPSET = 13
+#    NORMALIZED_CONFIG_CLASS = NormalizedTextConfig.with_args(num_layers='n_layer', num_attention_heads='n_head', hidden_size='n_embd')
+#    def patch_model_for_export(
+#        self, model: Union["PreTrainedModel", "TFPreTrainedModel"], model_kwargs: Optional[Dict[str, Any]] = None
+#    ) -> "ModelPatcher":
+#        return CodegenModelPatcher(self, model, model_kwargs=model_kwargs)
+
 
 
 class QwenDummyPastKeyValuesGenerator(DummyPastKeyValuesGenerator):

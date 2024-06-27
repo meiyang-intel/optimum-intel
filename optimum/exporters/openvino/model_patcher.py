@@ -475,6 +475,39 @@ class LlamaModelPatcher(DecoderModelPatcher):
         if hasattr(self._model.model, "_orig_update_causal_mask"):
             self._model.model._update_causal_mask = self._model.model._orig_update_causal_mask
 
+class CodegenModelPatcher(DecoderModelPatcher):
+    def __enter__(self):
+        super().__enter__()
+
+        # Cos/Sin table should be generated in FP32 to avoid accuracy
+        # Here we use a fixed-length cos/sin table to avoid accuracy issue of runtime generation
+        def create_sinusoidal_positions(num_pos: int, dim: int) -> torch.Tensor:
+            inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2, dtype=torch.int64) / dim))
+            sinusoid_inp = torch.einsum(
+                "i , j -> i j", torch.arange(num_pos, dtype=torch.int64).float(), inv_freq
+            ).float()
+            emb = torch.cat((sinusoid_inp, sinusoid_inp), dim=-1)
+            return torch.cat((torch.sin(emb), torch.cos(emb)), dim=1)
+
+        embed_dim = self._model.config.hidden_size
+        rotary_dim = self._model.config.rotary_dim
+        pos_embd_dim = rotary_dim or embed_dim
+        self._model.register_buffer(
+            "embed_positions", create_sinusoidal_positions(self._model.config.max_position_embeddings, pos_embd_dim)
+        )
+
+        print(self._model)
+        for layer in self._model.transformer.h:
+            attn = layer.attn
+            print("==============")
+            print(type(layer))
+            print(inspect.getfile(layer.__class__))
+            print(type(attn))
+            print(inspect.getfile(attn.__class__))
+            print(attn.embed_positions)
+            attn.embed_positions = self._model.embed_positions
+            print(attn.embed_positions)
+
 
 SUPPORT_SDPA = is_torch_version(">", "2.1.0")
 
